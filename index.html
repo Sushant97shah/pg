@@ -20,7 +20,6 @@
     </nav>
     <div class="header-actions">
       <button class="btn btn-ghost" data-view="owner">For owners</button>
-      <button class="btn btn-dark" data-action="login">Sign in</button>
       <button class="menu-btn" data-action="menu" aria-label="Open menu">☰</button>
     </div>
   </header>
@@ -51,6 +50,7 @@
         <button class="filter-chip active" data-filter="all">All stays</button><button class="filter-chip" data-filter="co-living">Co-living</button><button class="filter-chip" data-filter="hostel">Hostels</button><button class="filter-chip" data-filter="pg">PGs</button>
         <select id="sort-stays" class="sort-select"><option value="recommended">Recommended</option><option value="price">Price: low to high</option><option value="rating">Top rated</option></select>
       </div>
+      <div class="map-panel" id="map-panel" aria-label="Map based discovery"></div>
       <div class="listing-grid" id="listing-grid"></div>
       <div class="empty-state hidden" id="empty-state"><span>⌕</span><h3>No stays found</h3><p>Try another locality or remove a filter.</p></div>
     </section>
