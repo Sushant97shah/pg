@@ -63,7 +63,33 @@ const getCombinedStays = () => {
 };
 
 let activeFilter = "all";
-let state = { authMode: "tenant" };
+let state = { authMode: "tenant", supabase: null, config: null };
+
+async function loadSupabaseConfig() {
+  try {
+    const response = await fetch("/api/config");
+    const config = await response.json();
+    if (!config.configured || !config.supabaseUrl || !config.supabaseAnonKey || !window.supabase) {
+      return;
+    }
+    state.config = config;
+    state.supabase = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+      auth: { persistSession: true, autoRefreshToken: true }
+    });
+    const { data } = await state.supabase.auth.getSession();
+    if (data.session) {
+      setUserSession({
+        name: data.session.user?.user_metadata?.full_name || data.session.user?.email || "Owner",
+        email: data.session.user?.email,
+        role: data.session.user?.role || "owner",
+        accessToken: data.session.access_token
+      });
+      renderHeaderUser();
+    }
+  } catch (error) {
+    state.config = null;
+  }
+}
 
 function renderHeaderUser() {
   const session = getUserSession();
@@ -167,20 +193,65 @@ function openLoginModal(mode = "tenant") {
         <button class="auth-tab ${!isOwner ? "active" : ""}" data-auth-mode="tenant">Tenant</button>
         <button class="auth-tab ${isOwner ? "active" : ""}" data-auth-mode="owner">Owner</button>
       </div>
+      ${isOwner ? `
+      <form id="auth-form" class="auth-form">
+        <label>Full name<input required name="name" placeholder="Owner name"></label>
+        <label>Email<input required type="email" name="email" placeholder="owner@email.com"></label>
+        <label>Password<input required type="password" name="password" placeholder="Create a secure password"></label>
+        <button class="btn btn-dark auth-submit" type="submit">${state.supabase ? "Sign up / Sign in" : "Create owner account"}</button>
+      </form>
+      ` : `
       <form id="auth-form" class="auth-form">
         <label>Mobile number<input required type="tel" name="phone" placeholder="Enter 10-digit mobile number" maxlength="10"></label>
-        <label>Name<input required name="name" placeholder="${isOwner ? "Owner name" : "Full name"}"></label>
+        <label>Name<input required name="name" placeholder="Full name"></label>
         <button class="btn btn-dark auth-submit" type="submit">Send OTP</button>
       </form>
+      `}
     </div>
   `;
   openModal(form);
   document.querySelectorAll(".auth-tab").forEach((button) => {
     button.addEventListener("click", () => openLoginModal(button.dataset.authMode));
   });
-  document.querySelector("#auth-form").addEventListener("submit", (event) => {
+  document.querySelector("#auth-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
+
+    if (isOwner) {
+      const email = String(form.get("email") || "").trim();
+      const password = String(form.get("password") || "");
+      const name = String(form.get("name") || "").trim();
+      if (!email || !password || !name) return;
+      if (!state.supabase) {
+        const session = { name, email, role: "owner" };
+        setUserSession(session);
+        renderHeaderUser();
+        document.querySelector("#modal").classList.add("hidden");
+        showOwnerDashboard();
+        return;
+      }
+      try {
+        const response = await fetch("/api/owner-auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "signup", email, password, name })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || "Owner sign-up failed.");
+        }
+        const accessToken = result.session?.access_token || "";
+        const session = { name, email, role: "owner", accessToken };
+        setUserSession(session);
+        renderHeaderUser();
+        document.querySelector("#modal").classList.add("hidden");
+        showOwnerDashboard();
+      } catch (error) {
+        alert(error.message || "Owner auth failed.");
+      }
+      return;
+    }
+
     const phone = String(form.get("phone") || "").replace(/\D/g, "");
     const name = String(form.get("name") || "").trim();
     if (phone.length !== 10 || !name) return;
@@ -296,11 +367,10 @@ function showOwnerDashboard() {
       `).join("")}</div>
     </div>
   `);
-  document.querySelector("#owner-form").addEventListener("submit", (event) => {
+  document.querySelector("#owner-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
-    const next = {
-      id: `owner-${Date.now()}`,
+    const payload = {
       name: String(form.get("name") || "").trim(),
       area: String(form.get("area") || "").trim(),
       city: "Bengaluru",
@@ -308,8 +378,39 @@ function showOwnerDashboard() {
       rent: Number(form.get("rent") || 0),
       phone: String(form.get("phone") || "").trim(),
       image: String(form.get("image") || "https://images.unsplash.com/photo-1494526585095-c41746248156?auto=format&fit=crop&w=900&q=85"),
+      rooms_available: 5,
       roomsAvailable: 5,
       status: "Pending review"
+    };
+
+    const session = getUserSession();
+    const useBackend = !!session?.accessToken;
+
+    if (useBackend) {
+      try {
+        const response = await fetch("/api/properties", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${session.accessToken}`
+          },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || "Property save failed.");
+        }
+      } catch (error) {
+        alert(error.message || "Could not save property.");
+      }
+    }
+
+    const next = {
+      id: `owner-${Date.now()}`,
+      ...payload,
+      image: payload.image,
+      roomsAvailable: payload.roomsAvailable || payload.rooms_available || 5,
+      status: payload.status || "Pending review"
     };
     const updated = [next, ...getOwnerProperties()];
     setOwnerProperties(updated);
@@ -378,4 +479,7 @@ document.querySelectorAll(".filter-chip").forEach((button) => {
 });
 
 renderHeaderUser();
+if (window.supabase) {
+  loadSupabaseConfig();
+}
 render();
