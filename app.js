@@ -57,13 +57,15 @@ const getCombinedStays = () => {
     rating: 4.8,
     reviews: 18,
     status: property.status || "Live",
+    latitude: Number(property.latitude) || null,
+    longitude: Number(property.longitude) || null,
     ownerFlag: true
   }));
   return [...dataset, ...ownerProps];
 };
 
 let activeFilter = "all";
-let state = { authMode: "tenant", supabase: null, config: null };
+let state = { authMode: "tenant", supabase: null, config: null, userLocation: null, nearestMode: false };
 
 async function loadSupabaseConfig() {
   try {
@@ -105,36 +107,77 @@ function renderHeaderUser() {
   headerActions.insertAdjacentHTML("beforeend", `<div class="user-pod" data-user-role="${session.role || "tenant"}"><span>Hi, ${escapeHtml(safeName)}</span><button class="mini-logout" data-action="logout">Logout</button></div>`);
 }
 
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const toRadians = (value) => value * Math.PI / 180;
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getNearestStays(location) {
+  return getCombinedStays()
+    .filter((stay) => Number.isFinite(stay.latitude) && Number.isFinite(stay.longitude))
+    .map((stay) => ({ ...stay, distanceKm: haversineKm(location.latitude, location.longitude, stay.latitude, stay.longitude) }))
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .slice(0, 15);
+}
+
+function useCurrentLocation() {
+  const status = document.querySelector("#location-status");
+  const button = document.querySelector("#use-location");
+  if (!navigator.geolocation) {
+    if (status) status.textContent = "Location is not supported by this browser.";
+    return;
+  }
+  if (status) status.textContent = "Requesting your location...";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Finding nearby PGs...";
+  }
+  navigator.geolocation.getCurrentPosition((position) => {
+    state.userLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+    state.nearestMode = true;
+    activeFilter = "all";
+    const search = document.querySelector("#filter-location");
+    if (search) search.value = "";
+    render();
+  }, (error) => {
+    const message = error.code === 1 ? "Location permission was denied. You can search by locality instead." : "Could not fetch location. Please try again.";
+    if (status) status.textContent = message;
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Use my current location";
+    }
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 });
+}
+
 function renderMap() {
   const mapPanel = document.querySelector("#map-panel");
   if (!mapPanel) return;
-  const areas = Object.entries(
-    getCombinedStays().reduce((acc, item) => {
-      const region = item.area || "Bengaluru";
-      acc[region] = (acc[region] || 0) + 1;
-      return acc;
-    }, {})
-  ).slice(0, 5);
-  const pinsMarkup = areas.map(([label, count], index) => {
+  const nearby = state.userLocation ? getNearestStays(state.userLocation) : [];
+  const statusText = state.userLocation
+    ? `Showing the ${nearby.length} closest PGs with available map coordinates.`
+    : "Allow location access to see the 15 closest PGs to you.";
+  const nearbyPins = nearby.slice(0, 5).map((stay, index) => {
     const left = [15, 42, 68, 62, 30][index % 5];
     const top = [25, 48, 28, 65, 58][index % 5];
-    return `<button class="map-pin" data-area="${escapeHtml(label)}" style="left:${left}%;top:${top}%"><strong>${count}</strong><span>${escapeHtml(label)}</span></button>`;
+    return `<button class="map-pin" data-id="${escapeHtml(stay.id)}" style="left:${left}%;top:${top}%"><strong>${stay.distanceKm.toFixed(1)} km</strong><span>${escapeHtml(stay.area)}</span></button>`;
   }).join("");
+  const listItems = (state.userLocation ? nearby.slice(0, 5) : getCombinedStays().slice(0, 5));
   mapPanel.innerHTML = `
-    <div class="map-wrapper">
-      <div class="map-grid"></div>
-      ${pinsMarkup}
+    <div class="location-discovery">
+      <div><span class="eyebrow">NEARBY DISCOVERY</span><h3>${state.userLocation ? "PGs closest to you" : "Find PGs near you"}</h3><p id="location-status">${statusText}</p></div>
+      <button class="btn btn-dark" id="use-location" type="button">${state.userLocation ? "Refresh my location" : "Use my current location"}</button>
     </div>
-    <div class="map-list">${areas.map(([label, count]) => `<button class="map-area" data-area="${escapeHtml(label)}"><span>${escapeHtml(label)}</span><strong>${count} listings</strong></button>`).join("")}</div>
+    <div class="map-wrapper"><div class="map-grid"></div>${state.userLocation ? '<span class="user-location-dot" title="Your location"></span>' : ''}${nearbyPins}</div>
+    <div class="map-list">${listItems.map((stay) => `<button class="map-area" data-id="${escapeHtml(stay.id)}"><span>${escapeHtml(stay.area || stay.location)}</span><strong>${state.userLocation ? `${stay.distanceKm.toFixed(1)} km away` : "Enable location to calculate distance"}</strong></button>`).join("")}</div>
   `;
+  document.querySelector("#use-location")?.addEventListener("click", useCurrentLocation);
   mapPanel.querySelectorAll(".map-area, .map-pin").forEach((button) => {
     button.addEventListener("click", () => {
-      const area = button.dataset.area;
-      const field = document.querySelector("#filter-location");
-      if (field) field.value = area;
-      activeFilter = "all";
-      render();
-      document.querySelector("#explore")?.scrollIntoView({ behavior: "smooth" });
+      const stay = getCombinedStays().find((item) => String(item.id) === String(button.dataset.id));
+      if (stay) showDetail(stay.id);
     });
   });
 }
@@ -152,6 +195,9 @@ function render() {
     `${stay.name} ${stay.location}`.toLowerCase().includes(query) &&
     (!budget || typeof stay.rent === "number" && stay.rent <= budget)
   );
+  if (state.nearestMode && state.userLocation) {
+    items = getNearestStays(state.userLocation).filter((nearby) => items.some((item) => String(item.id) === String(nearby.id)));
+  }
   if (sort === "price") items.sort((a, b) => (typeof a.rent === "number" ? a.rent : Infinity) - (typeof b.rent === "number" ? b.rent : Infinity));
   if (sort === "rating") items.sort((a, b) => (b.rating || 0) - (a.rating || 0));
   grid.innerHTML = items.map((stay) => `<article class="listing-card" data-id="${stay.id}">
@@ -166,7 +212,7 @@ function render() {
     </div></article>`).join("");
   empty.classList.toggle("hidden", items.length > 0);
   grid.querySelectorAll(".listing-card").forEach((card) => card.addEventListener("click", (event) => {
-    if (!event.target.closest(".heart")) showDetail(Number(card.dataset.id));
+    if (!event.target.closest(".heart")) showDetail(card.dataset.id);
   }));
   renderMap();
 }
@@ -292,7 +338,7 @@ function openOtpModal({ phone, name, role, otp }) {
 
 function showDetail(id) {
   const stays = getCombinedStays();
-  const stay = stays.find((item) => item.id === id);
+  const stay = stays.find((item) => String(item.id) === String(id));
   if (!stay) return;
   const cover = stay.coverImage || stay.image;
   const gallery = Array.isArray(stay.gallery) ? stay.gallery.filter(Boolean) : [];
