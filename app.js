@@ -25,7 +25,7 @@ const setUserSession = (user) => localStorage.setItem(STORAGE_KEYS.auth, JSON.st
 const clearUserSession = () => localStorage.removeItem(STORAGE_KEYS.auth);
 const typeName = (type) => type === "co-living" ? "Co-living" : type === "pg" ? "PG" : "Hostel";
 const display = (value) => value === undefined || value === null || value === "" ? NOT_LISTED : value;
-const money = (value) => typeof value === "number" ? `₹${value.toLocaleString("en-IN")}` : display(value);
+const money = (value) => typeof value === "number" && value > 0 ? `\u20b9${value.toLocaleString("en-IN")}` : "Rent not listed";
 const escapeHtml = (value) => String(display(value)).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const getCombinedStays = () => {
   const dataset = baseDataset.map((pg, index) => ({
@@ -34,7 +34,7 @@ const getCombinedStays = () => {
     name: pg.name || NOT_LISTED,
     location: `${pg.area || pg.locality || "Bengaluru"}, Bengaluru`,
     type: pg.type || "pg",
-    rent: typeof pg.priceSingleSharing === "number" ? pg.priceSingleSharing : (Number(pg.priceSingleSharing) || 0),
+    rent: typeof pg.priceSingleSharing === "number" && pg.priceSingleSharing > 0 ? pg.priceSingleSharing : (Number(pg.priceSingleSharing) > 0 ? Number(pg.priceSingleSharing) : null),
     rooms: "Single / Double / Triple / 4 Sharing",
     amenities: Array.isArray(pg.amenities) && pg.amenities.length ? pg.amenities : [NOT_LISTED],
     image: pg.coverImage || pg.image || "",
@@ -49,7 +49,7 @@ const getCombinedStays = () => {
     area: property.area || property.locality || "Bengaluru",
     location: `${property.area || property.locality || "Bengaluru"}, ${property.city || "Bengaluru"}`,
     type: property.type || "pg",
-    rent: Number(property.rent) || 0,
+    rent: Number(property.rent) > 0 ? Number(property.rent) : null,
     rooms: property.roomsAvailable ? `${property.roomsAvailable} rooms available` : "Rooms available",
     amenities: property.amenities || ["Wi-Fi", "Food", "Laundry", "Power backup"],
     image: property.image || "https://images.unsplash.com/photo-1494526585095-c41746248156?auto=format&fit=crop&w=900&q=85",
@@ -193,7 +193,7 @@ function render() {
   let items = stays.filter((stay) =>
     (activeFilter === "all" || stay.type === activeFilter) &&
     `${stay.name} ${stay.location}`.toLowerCase().includes(query) &&
-    (!budget || typeof stay.rent === "number" && stay.rent <= budget)
+    (!budget || typeof stay.rent === "number" && stay.rent > 0 && stay.rent <= budget)
   );
   if (state.nearestMode && state.userLocation) {
     items = getNearestStays(state.userLocation).filter((nearby) => items.some((item) => String(item.id) === String(nearby.id)));
@@ -208,7 +208,7 @@ function render() {
     <div class="listing-info"><h3>${escapeHtml(stay.name)}</h3>
       <div class="location">⌖ ${escapeHtml(stay.location)}</div>
       <div class="card-meta"><span>${typeName(stay.type)}</span><span>•</span><span>${escapeHtml(stay.rooms)}</span></div>
-      <div class="card-bottom"><div class="price">${money(stay.rent)} <small>${typeof stay.rent === "number" ? "/ month" : ""}</small></div><div class="rating">★ ${Number(stay.rating || 4.7).toFixed(1)} · ${Number(stay.reviews || 0).toLocaleString("en-IN")}</div></div>
+      <div class="card-bottom"><div class="price">${money(stay.rent)} <small>${typeof stay.rent === "number" && stay.rent > 0 ? "/ month" : ""}</small></div><div class="rating">★ ${Number(stay.rating || 4.7).toFixed(1)} · ${Number(stay.reviews || 0).toLocaleString("en-IN")}</div></div>
     </div></article>`).join("");
   empty.classList.toggle("hidden", items.length > 0);
   grid.querySelectorAll(".listing-card").forEach((card) => card.addEventListener("click", (event) => {
@@ -421,7 +421,7 @@ function showOwnerDashboard() {
       area: String(form.get("area") || "").trim(),
       city: "Bengaluru",
       type: String(form.get("type") || "pg"),
-      rent: Number(form.get("rent") || 0),
+      rent: Number(form.get("rent") || 0) > 0 ? Number(form.get("rent") || 0) : null,
       phone: String(form.get("phone") || "").trim(),
       image: String(form.get("image") || "https://images.unsplash.com/photo-1494526585095-c41746248156?auto=format&fit=crop&w=900&q=85"),
       rooms_available: 5,
