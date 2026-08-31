@@ -164,14 +164,12 @@ function renderMap() {
     const top = [25, 48, 28, 65, 58][index % 5];
     return `<button class="map-pin" data-id="${escapeHtml(stay.id)}" style="left:${left}%;top:${top}%"><strong>${stay.distanceKm.toFixed(1)} km</strong><span>${escapeHtml(stay.area)}</span></button>`;
   }).join("");
-  const listItems = (state.userLocation ? nearby.slice(0, 5) : getCombinedStays().slice(0, 5));
   mapPanel.innerHTML = `
     <div class="location-discovery">
       <div><span class="eyebrow">NEARBY DISCOVERY</span><h3>${state.userLocation ? "PGs closest to you" : "Find PGs near you"}</h3><p id="location-status">${statusText}</p></div>
       <button class="btn btn-dark" id="use-location" type="button">${state.userLocation ? "Refresh my location" : "Use my current location"}</button>
     </div>
     <div class="map-wrapper"><div class="map-grid"></div>${state.userLocation ? '<span class="user-location-dot" title="Your location"></span>' : ''}${nearbyPins}</div>
-    <div class="map-list">${listItems.map((stay) => `<button class="map-area" data-id="${escapeHtml(stay.id)}"><span>${escapeHtml(stay.area || stay.location)}</span><strong>${state.userLocation ? `${stay.distanceKm.toFixed(1)} km away` : "Enable location to calculate distance"}</strong></button>`).join("")}</div>
   `;
   document.querySelector("#use-location")?.addEventListener("click", useCurrentLocation);
   mapPanel.querySelectorAll(".map-area, .map-pin").forEach((button) => {
