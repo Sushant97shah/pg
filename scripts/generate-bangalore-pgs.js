@@ -30,21 +30,7 @@ const EXCLUDED_PLACE_NAMES = [
   'BRIGADE PG FOR GENTS'
 ].map((name) => name.toLowerCase());
 
-const LOCALITIES = [
-  'Vidhana Soudha', 'Cubbon Park', 'M. Chinnaswamy Stadium', 'MG Road', 'Brigade Road',
-  'Church Street', 'Richmond Circle', 'Richmond Town', 'Shanthinagar', 'Ashok Nagar',
-  'Shantala Nagar', 'Langford Town', 'Langford Gardens', 'Ulsoor', 'Halasuru',
-  'Ulsoor Lake', 'Shivajinagar', 'Russell Market', 'Vasanth Nagar', 'Cunningham Road',
-  'Palace Road', 'Bangalore Palace', 'Race Course', 'High Grounds', 'Seshadripuram',
-  'Gandhinagar', 'Majestic', 'Freedom Park', 'Chickpet', 'KR Market', 'Kalāsipālyam',
-  'Chamarajpet', 'Basavanagudi', 'Mavalli', 'Lalbagh', 'Wilson Garden', 'Jayanagar',
-  'Malleshwaram', 'Sadashivanagar', 'Rajajinagar', 'Frazer Town', 'Cox Town',
-  'Benson Town', 'Cooke Town', 'Domlur', 'Indiranagar', 'Koramangala', 'BTM Layout',
-  'HSR Layout', 'JP Nagar', 'Banashankari', 'Yeshwanthpur', 'Whitefield',
-  'Marathahalli', 'Bellandur', 'Electronic City', 'Banaswadi', 'Yelahanka',
-  'Sarjapur Road', 'Vijayanagar', 'Kalyan Nagar', 'Mysore Road', 'Hebbal',
-  'Bannerghatta Road', 'Brookefield', 'Nagawara', 'Old Airport Road'
-];
+const CITIES = ['Bengaluru', 'Delhi', 'Mumbai', 'Pune', 'Hyderabad', 'Chennai', 'Gurugram', 'Noida', 'Kolkata', 'Ahmedabad', 'Jaipur', 'Lucknow', 'Indore', 'Kota', 'Navi Mumbai', 'Thane', 'Chandigarh', 'Mohali', 'Coimbatore', 'Surat', 'Nagpur', 'Bhopal', 'Bhubaneswar', 'Visakhapatnam', 'Patna', 'Vadodara', 'Mysuru', 'Mangaluru', 'Dehradun', 'Vijayawada', 'Kochi', 'Thiruvananthapuram', 'Guwahati', 'Ranchi', 'Kanpur', 'Varanasi', 'Prayagraj', 'Agra', 'Nashik', 'Aurangabad', 'Rajkot', 'Jodhpur', 'Udaipur', 'Amritsar', 'Ludhiana', 'Jamshedpur', 'Salem', 'Tiruchirappalli', 'Manipal', 'Vellore'];
 
 const FALLBACK_COORDS = {
   'Koramangala': [12.9352, 77.6245], 'Indiranagar': [12.9719, 77.6412], 'HSR Layout': [12.9121, 77.6442],
@@ -258,7 +244,7 @@ async function fetchPlacePhotos(placeName, details = {}) {
 async function getTavilyBreadth(locality, propertyName = '') {
   const apiKey = process.env.TAVILY_API_KEY || process.env.TAVILY_KEY;
   if (!apiKey) return { answer: '', results: [] };
-  const searchTerm = propertyName ? `${propertyName} ${locality} PG rent price monthly sharing` : `Bangalore ${locality} PG rent and listing info`;
+  const searchTerm = propertyName ? `${propertyName} ${locality} PG rent price monthly sharing` : `${locality} India PG hostel paying guest rent listings`;
   try {
     const payload = await requestJson('https://api.tavily.com/search', {
       method: 'POST',
@@ -293,16 +279,37 @@ async function buildLiveDataset() {
   const rows = [];
   const localityPrices = {};
 
-  for (const locality of LOCALITIES) {
+  for (const locality of CITIES) {
     const tavily = await getTavilyBreadth(locality);
     const text = [tavily.answer || '', ...(tavily.results || []).map((r) => r.content || r.title || '')].join(' ');
     localityPrices[locality] = { single: null, double: null, triple: null, four: null };
 
-    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(`${locality} PG accommodation Bangalore`)}&key=${apiKey}`;
     try {
-      const data = await requestJson(url);
-      const results = Array.isArray(data.results) ? data.results : [];
-      for (const entry of results.slice(0, MAX_LISTINGS_PER_LOCALITY)) {
+      const queries = [`${locality} PG accommodation`, `${locality} paying guest`, `${locality} hostel`, `${locality} co-living`];
+      const cityEntries = [];
+      const citySeen = new Set();
+      for (const query of queries) {
+        let pageToken = '';
+        for (let page = 0; page < 3 && cityEntries.length < 500; page += 1) {
+          const url = pageToken
+            ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${encodeURIComponent(pageToken)}&key=${apiKey}`
+            : `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(`${query} ${locality} India`)}&key=${apiKey}`;
+          const data = await requestJson(url);
+          const results = Array.isArray(data.results) ? data.results : [];
+          for (const entry of results) {
+            if (entry.place_id && !citySeen.has(entry.place_id)) {
+              citySeen.add(entry.place_id);
+              cityEntries.push(entry);
+            }
+          }
+          pageToken = data.next_page_token || '';
+          if (!pageToken) break;
+          await new Promise((resolve) => setTimeout(resolve, 2200));
+        }
+        if (cityEntries.length >= 500) break;
+      }
+      const results = cityEntries;
+      for (const entry of results) {
         if (!entry.place_id || seen.has(entry.place_id)) continue;
         if (isExcludedPlace(entry.name)) continue;
         seen.add(entry.place_id);
@@ -373,52 +380,7 @@ async function buildLiveDataset() {
 }
 
 function fallbackDataset() {
-  const rows = [];
-  LOCALITIES.forEach((locality, idx) => {
-    for (let i = 0; i < 4; i += 1) {
-      const single = 7000 + ((idx + i) * 210) % 6000;
-      const double = single + 2400;
-      const triple = double + 1800;
-      const four = triple + 1500;
-      const cover = BASE_IMAGES[(idx + i) % BASE_IMAGES.length];
-      rows.push({
-        id: rows.length + 1,
-        name: `${locality} ${['PG', 'Residency', 'Homes', 'Stay'][i]}`,
-        area: locality,
-        locality,
-        address: `${i + 1}, ${locality} Main Road, Bengaluru, Karnataka ${560000 + ((idx + i) * 17) % 4000}, India`,
-        googleMapUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${locality} PG Bengaluru`)}`,
-        pincode: String(560000 + ((idx + i) * 17) % 4000),
-        nearestLandmark: `${locality} main road and metro connection`,
-        latitude: Number((FALLBACK_COORDS[locality]?.[0] ?? 12.9716 + i * 0.01).toFixed(5)),
-        longitude: Number((FALLBACK_COORDS[locality]?.[1] ?? 77.5946 + i * 0.01).toFixed(5)),
-        facility: 'Fully furnished PG accommodation',
-        prices: { singleSharing: single, doubleSharing: double, tripleSharing: triple, fourSharing: four },
-        priceSingleSharing: single,
-        priceDoubleSharing: double,
-        priceTripleSharing: triple,
-        priceFourSharing: four,
-        meals: 'Veg + Non-Veg available',
-        otherFacilities: ['Wi-Fi', 'Laundry', 'Housekeeping', 'Power backup', 'Security', 'CCTV'],
-        gym: 'Available on request',
-        parking: 'On request',
-        deposit: single * 2,
-        rules: ['Visitors allowed during daytime', 'No smoking inside rooms', 'Quiet hours after 10 PM', 'Advance notice required'],
-        contactNumber: '+91 9000000000',
-        phone: '+91 9000000000',
-        amenities: ['Washing machine', 'Water cooler', 'Fridge', 'Wi-Fi', 'CCTV', 'Housekeeping'],
-        image: cover,
-        coverImage: cover,
-        gallery: [cover, BASE_IMAGES[(idx + i + 1) % BASE_IMAGES.length]],
-        photos: [cover, BASE_IMAGES[(idx + i + 1) % BASE_IMAGES.length]],
-        type: 'pg',
-        rating: 4.6 + (i * 0.1),
-        reviews: 40 + ((idx + i) * 12),
-        verified: true
-      });
-    }
-  });
-  return rows.slice(0, 120);
+  return [];
 }
 
 async function writeDataset() {
@@ -431,7 +393,10 @@ async function writeDataset() {
     console.warn('Live dataset skipped: missing GOOGLE_API_KEY and/or TAVILY_API_KEY. Writing fallback demo data only.');
   }
 
-  const data = hasGoogleKey ? await buildLiveDataset() : fallbackDataset();
+  if (!hasGoogleKey || !hasTavilyKey) {
+    throw new Error('Both GOOGLE_API_KEY and TAVILY_API_KEY are required for real-data-only generation.');
+  }
+  const data = await buildLiveDataset();
   const payload = `window.BANGALORE_PGS = ${JSON.stringify(data, null, 2)};\n`;
   fs.writeFileSync(outputFile, payload, 'utf8');
   console.log(`Wrote ${data.length} PG records to ${outputFile}`);
@@ -439,8 +404,6 @@ async function writeDataset() {
 
 writeDataset().catch((error) => {
   console.error('PG dataset generation failed:', error);
-  const fallback = fallbackDataset();
-  fs.writeFileSync(outputFile, `window.BANGALORE_PGS = ${JSON.stringify(fallback, null, 2)};\n`, 'utf8');
-  console.log(`Fallback dataset written to ${outputFile}`);
+  console.error('No fallback data written because fabricated records are disabled.');
   process.exitCode = 1;
 });

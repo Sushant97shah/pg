@@ -1,0 +1,4 @@
+.env
+.env.*
+!.env.example
+brave_screenshot_pg-beta-five.vercel.app.png
